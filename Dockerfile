@@ -1,4 +1,4 @@
-FROM golang:1.20 AS build-stage
+FROM golang:1.21 AS build-stage
 
 # Set destination for COPY
 WORKDIR /app
@@ -18,8 +18,8 @@ FROM build-stage AS run-test-stage
 RUN go test -v ./...
 
 # Deploy the application binary into a lean image
-FROM gcr.io/distroless/base-debian11 AS build-release-stage
-
+#FROM gcr.io/distroless/base-debian11 AS build-release-stage
+FROM registry.access.redhat.com/ubi9/ubi-minimal
 WORKDIR /
 
 COPY --from=build-stage /wingnut-api /wingnut-api
@@ -29,8 +29,9 @@ COPY --from=build-stage /wingnut-api /wingnut-api
 # But we can document in the Dockerfile what ports
 # the application is going to listen on by default.
 # https://docs.docker.com/engine/reference/builder/#expose
-EXPOSE 8080
+#EXPOSE 8080
 
-USER nonroot:nonroot
+#USER nonroot:nonroot
+USER 1001
 
 ENTRYPOINT ["/wingnut-api"]

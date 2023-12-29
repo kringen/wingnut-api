@@ -9,17 +9,48 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	rmq "github.com/kringen/message-center/rabbitmq"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 type Configuration struct {
-	Mode string `json:"mode"`
+	Mode      string `json:"mode"`
+	Objective string `json:"objective"`
 }
 
 var logger = log.New(os.Stdout, "INFO: ", log.Ldate|log.Ltime)
 
 func HealthCheck(w http.ResponseWriter, r *http.Request) {
 	logger.Printf("%s %s %s", r.Method, r.URL, r.RemoteAddr)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	response := []byte(`{"status":"ok"}`)
+	w.Write(response)
+}
+
+func CreateConfiguration(w http.ResponseWriter, r *http.Request) {
+	logger.Printf("%s %s %s", r.Method, r.URL, r.RemoteAddr)
+	var config Configuration
+	json.NewDecoder(r.Body).Decode(&config)
+	// Connect to the channel
+	// Establish messaging connection
+	messageCenter := rmq.MessageCenter{}
+	// Define RabbitMQ server URL.
+	messageCenter.ServerUrl = os.Getenv("RABBIT_URL")
+	channelName := "wingnut"
+	err := messageCenter.Connect(channelName, 5, 5)
+	if err != nil {
+		panic(err)
+	}
+	defer messageCenter.Connection.Close()
+	defer messageCenter.Channel.Close()
+	// Create a test message
+	b, err := json.Marshal(config)
+	if err != nil {
+		panic(err)
+	}
+	publishMessage(&messageCenter, "config", b)
+	// Return success
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	response := []byte(`{"status":"ok"}`)
@@ -47,56 +78,48 @@ func failOnError(err error, msg string) {
 	}
 }
 
-func initialValues(conn *amqp.Connection) error {
-
-	ch, err := conn.Channel()
-	failOnError(err, "Failed to open a channel")
-	defer ch.Close()
-
-	q, err := ch.QueueDeclare(
-		"hello", // name
-		false,   // durable
-		false,   // delete when unused
-		false,   // exclusive
-		false,   // no-wait
-		nil,     // arguments
-	)
-	failOnError(err, "Failed to declare a queue")
-
+func publishMessage(messageCenter *rmq.MessageCenter, q string, message []byte) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-
-	body := "Hello World!"
-	err = ch.PublishWithContext(ctx,
-		"",     // exchange
-		q.Name, // routing key
-		false,  // mandatory
-		false,  // immediate
+	var err error
+	err = messageCenter.Channel.PublishWithContext(ctx,
+		"",    // exchange
+		q,     // routing key
+		false, // mandatory
+		false, // immediate
 		amqp.Publishing{
-			ContentType: "text/plain",
-			Body:        []byte(body),
+			ContentType: "application/json",
+			Body:        message,
 		})
 	failOnError(err, "Failed to publish a message")
-	log.Printf(" [x] Sent %s\n", body)
+	log.Printf(" [x] Sent %s\n", message)
+}
 
-	return nil
+func ConsumeMessages(chanConsumeMessages chan string, messageCenter *rmq.MessageCenter, queue string) {
+	// Subscribing to QueueService1 for getting messages.
+	messages, err := messageCenter.Channel.Consume(
+		queue, // queue name
+		"",    // consumer
+		true,  // auto-ack
+		false, // exclusive
+		false, // no local
+		false, // no wait
+		nil,   // arguments
+	)
+	if err != nil {
+		log.Println(err)
+	}
+
+	// Build a welcome message.
+	log.Println("Successfully connected to RabbitMQ")
+	log.Println("Waiting for messages")
+	for message := range messages {
+		// For example, show received message in a console.
+		log.Printf(" > Received message: %s\n", message.Body)
+	}
 }
 
 func main() {
-
-	rabbitUrl, rabbitUrlExists := os.LookupEnv("RABBIT_URL")
-	if !rabbitUrlExists {
-		logger.Printf("RABBIT_URL not set, running api without rabbitmq connection.")
-	} else {
-		logger.Printf("RABBIT_URL: %s", rabbitUrl)
-		conn, err := amqp.Dial(rabbitUrl)
-		failOnError(err, "Failed to connect to RabbitMQ")
-		defer conn.Close()
-
-		errValues := initialValues(conn)
-		failOnError(errValues, "Failed to initialize values")
-
-	}
 
 	//create a new router
 	router := mux.NewRouter()
@@ -104,9 +127,42 @@ func main() {
 	// specify endpoints, handler functions and HTTP method
 	router.HandleFunc("/healthz", HealthCheck).Methods("GET")
 	router.HandleFunc("/api/v1/config", GetConfiguration).Methods("GET")
+	router.HandleFunc("/api/v1/config", CreateConfiguration).Methods("POST")
 	http.Handle("/", router)
 
 	// start and listen to requests
 	log.Printf("Listening on port 8080...")
 	http.ListenAndServe(":8080", router)
+	/*
+		rabbitUrl, rabbitUrlExists := os.LookupEnv("RABBIT_URL")
+		if !rabbitUrlExists {
+			logger.Printf("RABBIT_URL not set, running api without rabbitmq connection.")
+		} else {
+			logger.Printf("RABBIT_URL: %s", rabbitUrl)
+			// Create a connection
+			conn, err := connect(rabbitUrl)
+			failOnError(err, "Failed to connect to RabbitMQ")
+			defer conn.Close()
+			// Open Channel
+			ch, err := conn.Channel()
+			failOnError(err, "Failed to open a channel")
+			defer ch.Close()
+			// Create a queue
+			logger.Printf("Creating queue...")
+			//_, err = createQueue(ch, "mode", false, false, false, false, nil)
+			//failOnError(err, "Failed to declare a queue")
+			// Create a test message
+			//queue := amqp.Queue{
+			//	Name: "mode",
+			//}
+			/*
+			publishMessage(ch, &queue, "This is only a test.")
+			for i := 0; i < 100; i++ {
+				publishMessage(ch, &queue, time.Now().Format("20060102150405"))
+				time.Sleep(5 * time.Second)
+
+			}
+
+		}*/
+
 }
