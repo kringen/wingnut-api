@@ -3,7 +3,8 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"log"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"time"
@@ -18,10 +19,10 @@ type Configuration struct {
 	Objective string `json:"objective"`
 }
 
-var logger = log.New(os.Stdout, "INFO: ", log.Ldate|log.Ltime)
+var logger = slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
 func HealthCheck(w http.ResponseWriter, r *http.Request) {
-	logger.Printf("%s %s %s", r.Method, r.URL, r.RemoteAddr)
+	logger.Info(fmt.Sprintf("%s %s %s", r.Method, r.URL, r.RemoteAddr))
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	response := []byte(`{"status":"ok"}`)
@@ -29,7 +30,7 @@ func HealthCheck(w http.ResponseWriter, r *http.Request) {
 }
 
 func CreateConfiguration(w http.ResponseWriter, r *http.Request) {
-	logger.Printf("%s %s %s", r.Method, r.URL, r.RemoteAddr)
+	logger.Info(fmt.Sprintf("%s %s %s", r.Method, r.URL, r.RemoteAddr))
 	var config Configuration
 	json.NewDecoder(r.Body).Decode(&config)
 	// Connect to the channel
@@ -58,7 +59,7 @@ func CreateConfiguration(w http.ResponseWriter, r *http.Request) {
 }
 
 func GetConfiguration(w http.ResponseWriter, r *http.Request) {
-	logger.Printf("%s %s %s", r.Method, r.URL, r.RemoteAddr)
+	logger.Info(fmt.Sprintf("%s %s %s", r.Method, r.URL, r.RemoteAddr))
 	config := Configuration{
 		Mode: "sleeping",
 	}
@@ -74,7 +75,7 @@ func GetConfiguration(w http.ResponseWriter, r *http.Request) {
 
 func failOnError(err error, msg string) {
 	if err != nil {
-		log.Panicf("%s: %s", msg, err)
+		logger.Error(fmt.Sprintf("%s: %s", msg, err))
 	}
 }
 
@@ -92,7 +93,7 @@ func publishMessage(messageCenter *rmq.MessageCenter, q string, message []byte) 
 			Body:        message,
 		})
 	failOnError(err, "Failed to publish a message")
-	log.Printf(" [x] Sent %s\n", message)
+	logger.Info(fmt.Sprintf(" [x] Sent %s\n", message))
 }
 
 func ConsumeMessages(chanConsumeMessages chan string, messageCenter *rmq.MessageCenter, queue string) {
@@ -107,15 +108,15 @@ func ConsumeMessages(chanConsumeMessages chan string, messageCenter *rmq.Message
 		nil,   // arguments
 	)
 	if err != nil {
-		log.Println(err)
+		logger.Error(err.Error())
 	}
 
 	// Build a welcome message.
-	log.Println("Successfully connected to RabbitMQ")
-	log.Println("Waiting for messages")
+	logger.Info("Successfully connected to RabbitMQ")
+	logger.Info("Waiting for messages")
 	for message := range messages {
 		// For example, show received message in a console.
-		log.Printf(" > Received message: %s\n", message.Body)
+		logger.Info(fmt.Sprintf(" > Received message: %s\n", message.Body))
 	}
 }
 
@@ -131,7 +132,7 @@ func main() {
 	http.Handle("/", router)
 
 	// start and listen to requests
-	log.Printf("Listening on port 8080...")
+	logger.Info("Listening on port 8080...")
 	http.ListenAndServe(":8080", router)
 	/*
 		rabbitUrl, rabbitUrlExists := os.LookupEnv("RABBIT_URL")
